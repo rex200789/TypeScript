@@ -6,6 +6,29 @@ namespace ts {
         list: Node;
     }
 
+    //move
+    export function getStringLiteralTypeForNode(node: StringLiteral | LiteralTypeNode, typeChecker: TypeChecker): LiteralType {
+        const searchNode = node.parent.kind === SyntaxKind.LiteralType ? <LiteralTypeNode>node.parent : node;
+        const type = typeChecker.getTypeAtLocation(searchNode);
+        if (type && type.flags & TypeFlags.StringLiteral) {
+            return <LiteralType>type;
+        }
+        return undefined;
+    }
+
+    //move
+    export function isThis(node: Node): boolean {
+        switch (node.kind) {
+            case SyntaxKind.ThisKeyword:
+            // case SyntaxKind.ThisType: TODO: GH#9267
+                return true;
+            case SyntaxKind.Identifier:
+                // 'this' as a parameter
+                return (node as Identifier).originalKeywordKind === SyntaxKind.ThisKeyword && node.parent.kind === SyntaxKind.Parameter;
+            default:
+                return false;
+        }
+    }
 
     //todo: their own file
     // TODO: move these to enums
@@ -181,7 +204,7 @@ namespace ts {
             (<BreakOrContinueStatement>node.parent).label === node;
     }
 
-    export function isLabelOfLabeledStatement(node: Node): boolean {
+    function isLabelOfLabeledStatement(node: Node): boolean {
         return node.kind === SyntaxKind.Identifier &&
             node.parent.kind === SyntaxKind.LabeledStatement &&
             (<LabeledStatement>node.parent).label === node;
@@ -640,6 +663,13 @@ namespace ts {
 
 
     //end
+
+
+
+
+
+
+
 
 
     export function getLineStartPositionForPosition(position: number, sourceFile: SourceFile): number {
@@ -1342,7 +1372,8 @@ namespace ts {
     }
 }
 
-// Display-part writer helpers
+//Display-part writer helpers
+//just give it its own file then!!!
 /* @internal */
 namespace ts {
     export function isFirstDeclarationOfSymbolParameter(symbol: Symbol) {

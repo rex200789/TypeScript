@@ -33,6 +33,7 @@
         "navigationBar.ts",
         "outliningElementsCollector.ts",
         "patternMatcher.ts",
+        "references.ts",
         "services.ts",
         "shims.ts",
         "signatureHelp.ts",
