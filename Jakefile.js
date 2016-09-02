@@ -97,6 +97,7 @@ var servicesSources = [
     "breakpoints.ts",
     "navigateTo.ts",
     "navigationBar.ts",
+    TODO: add new files here
     "outliningElementsCollector.ts",
     "patternMatcher.ts",
     "services.ts",
