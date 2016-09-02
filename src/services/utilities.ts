@@ -1,6 +1,587 @@
 // These utilities are common to multiple language service features.
 /* @internal */
 namespace ts {
+
+    //new utilities (used to be inside services.ts)
+    //todo: find references for each of these and see if they belong in a different module
+
+    export function getTargetLabel(referenceNode: Node, labelName: string): Identifier {
+        while (referenceNode) {
+            if (referenceNode.kind === SyntaxKind.LabeledStatement && (<LabeledStatement>referenceNode).label.text === labelName) {
+                return (<LabeledStatement>referenceNode).label;
+            }
+            referenceNode = referenceNode.parent;
+        }
+        return undefined;
+    }
+
+    export function isJumpStatementTarget(node: Node): boolean {
+        return node.kind === SyntaxKind.Identifier &&
+            (node.parent.kind === SyntaxKind.BreakStatement || node.parent.kind === SyntaxKind.ContinueStatement) &&
+            (<BreakOrContinueStatement>node.parent).label === node;
+    }
+
+    export function isLabelOfLabeledStatement(node: Node): boolean {
+        return node.kind === SyntaxKind.Identifier &&
+            node.parent.kind === SyntaxKind.LabeledStatement &&
+            (<LabeledStatement>node.parent).label === node;
+    }
+
+    /**
+     * Whether or not a 'node' is preceded by a label of the given string.
+     * Note: 'node' cannot be a SourceFile.
+     */
+    export function isLabeledBy(node: Node, labelName: string) {
+        for (let owner = node.parent; owner.kind === SyntaxKind.LabeledStatement; owner = owner.parent) {
+            if ((<LabeledStatement>owner).label.text === labelName) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    export function isLabelName(node: Node): boolean {
+        return isLabelOfLabeledStatement(node) || isJumpStatementTarget(node);
+    }
+
+    export function isRightSideOfQualifiedName(node: Node) {
+        return node.parent.kind === SyntaxKind.QualifiedName && (<QualifiedName>node.parent).right === node;
+    }
+
+    export function isRightSideOfPropertyAccess(node: Node) {
+        return node && node.parent && node.parent.kind === SyntaxKind.PropertyAccessExpression && (<PropertyAccessExpression>node.parent).name === node;
+    }
+
+    export function climbPastPropertyAccess(node: Node) {
+        return isRightSideOfPropertyAccess(node) ? node.parent : node;
+    }
+
+    /** Get `C` given `N` if `N` is in the position `class C extends N` or `class C extends foo.N` where `N` is an identifier. */
+    export function tryGetClassByExtendingIdentifier(node: Node): ClassLikeDeclaration | undefined {
+        return tryGetClassExtendingExpressionWithTypeArguments(climbPastPropertyAccess(node).parent);
+    }
+
+    export function isCallExpressionTarget(node: Node): boolean {
+        return isCallOrNewExpressionTarget(node, SyntaxKind.CallExpression);
+    }
+
+    export function isNewExpressionTarget(node: Node): boolean {
+        return isCallOrNewExpressionTarget(node, SyntaxKind.NewExpression);
+    }
+
+    export function isCallOrNewExpressionTarget(node: Node, kind: SyntaxKind) {
+        const target = climbPastPropertyAccess(node);
+        return target && target.parent && target.parent.kind === kind && (<CallExpression>target.parent).expression === target;
+    }
+
+    export function climbPastManyPropertyAccesses(node: Node): Node {
+        return isRightSideOfPropertyAccess(node) ? climbPastManyPropertyAccesses(node.parent) : node;
+    }
+
+    /** Returns a CallLikeExpression where `node` is the target being invoked. */
+    export function getAncestorCallLikeExpression(node: Node): CallLikeExpression | undefined {
+        const target = climbPastManyPropertyAccesses(node);
+        const callLike = target.parent;
+        return callLike && isCallLikeExpression(callLike) && getInvokedExpression(callLike) === target && callLike;
+    }
+
+    export function tryGetSignatureDeclaration(typeChecker: TypeChecker, node: Node): SignatureDeclaration | undefined {
+        const callLike = getAncestorCallLikeExpression(node);
+        return callLike && typeChecker.getResolvedSignature(callLike).declaration;
+    }
+
+    export function isNameOfModuleDeclaration(node: Node) {
+        return node.parent.kind === SyntaxKind.ModuleDeclaration && (<ModuleDeclaration>node.parent).name === node;
+    }
+
+    export function isNameOfFunctionDeclaration(node: Node): boolean {
+        return node.kind === SyntaxKind.Identifier &&
+            isFunctionLike(node.parent) && (<FunctionLikeDeclaration>node.parent).name === node;
+    }
+
+    export function isObjectLiteralPropertyDeclaration(node: Node): node is ObjectLiteralElement  {
+        switch (node.kind) {
+            case SyntaxKind.PropertyAssignment:
+            case SyntaxKind.ShorthandPropertyAssignment:
+            case SyntaxKind.MethodDeclaration:
+            case SyntaxKind.GetAccessor:
+            case SyntaxKind.SetAccessor:
+                return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns the containing object literal property declaration given a possible name node, e.g. "a" in x = { "a": 1 }
+     */
+    export function getContainingObjectLiteralElement(node: Node): ObjectLiteralElement {
+        switch (node.kind) {
+            case SyntaxKind.StringLiteral:
+            case SyntaxKind.NumericLiteral:
+                if (node.parent.kind === SyntaxKind.ComputedPropertyName) {
+                    return isObjectLiteralPropertyDeclaration(node.parent.parent) ? node.parent.parent : undefined;
+                }
+            // intential fall through
+            case SyntaxKind.Identifier:
+                return isObjectLiteralPropertyDeclaration(node.parent) && node.parent.name === node ? node.parent : undefined;
+        }
+        return undefined;
+    }
+
+    export function isLiteralNameOfPropertyDeclarationOrIndexAccess(node: Node): boolean {
+        if (node.kind === SyntaxKind.StringLiteral || node.kind === SyntaxKind.NumericLiteral) {
+            switch (node.parent.kind) {
+                case SyntaxKind.PropertyDeclaration:
+                case SyntaxKind.PropertySignature:
+                case SyntaxKind.PropertyAssignment:
+                case SyntaxKind.EnumMember:
+                case SyntaxKind.MethodDeclaration:
+                case SyntaxKind.MethodSignature:
+                case SyntaxKind.GetAccessor:
+                case SyntaxKind.SetAccessor:
+                case SyntaxKind.ModuleDeclaration:
+                    return (<Declaration>node.parent).name === node;
+                case SyntaxKind.ElementAccessExpression:
+                    return (<ElementAccessExpression>node.parent).argumentExpression === node;
+                case SyntaxKind.ComputedPropertyName:
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    export function isNameOfExternalModuleImportOrDeclaration(node: Node): boolean {
+        if (node.kind === SyntaxKind.StringLiteral) {
+            return isNameOfModuleDeclaration(node) ||
+                (isExternalModuleImportEqualsDeclaration(node.parent.parent) && getExternalModuleImportEqualsDeclarationExpression(node.parent.parent) === node);
+        }
+
+        return false;
+    }
+
+    /** Returns true if the position is within a comment */
+    export function isInsideComment(sourceFile: SourceFile, token: Node, position: number): boolean {
+        // The position has to be: 1. in the leading trivia (before token.getStart()), and 2. within a comment
+        return position <= token.getStart(sourceFile) &&
+            (isInsideCommentRange(getTrailingCommentRanges(sourceFile.text, token.getFullStart())) ||
+                isInsideCommentRange(getLeadingCommentRanges(sourceFile.text, token.getFullStart())));
+
+        function isInsideCommentRange(comments: CommentRange[]): boolean {
+            return forEach(comments, comment => {
+                // either we are 1. completely inside the comment, or 2. at the end of the comment
+                if (comment.pos < position && position < comment.end) {
+                    return true;
+                }
+                else if (position === comment.end) {
+                    const text = sourceFile.text;
+                    const width = comment.end - comment.pos;
+                    // is single line comment or just /*
+                    if (width <= 2 || text.charCodeAt(comment.pos + 1) === CharacterCodes.slash) {
+                        return true;
+                    }
+                    else {
+                        // is unterminated multi-line comment
+                        return !(text.charCodeAt(comment.end - 1) === CharacterCodes.slash &&
+                            text.charCodeAt(comment.end - 2) === CharacterCodes.asterisk);
+                    }
+                }
+                return false;
+            });
+        }
+    }
+
+    export const enum SemanticMeaning {
+        None = 0x0,
+        Value = 0x1,
+        Type = 0x2,
+        Namespace = 0x4,
+        All = Value | Type | Namespace
+    }
+
+    export const enum BreakContinueSearchType {
+        None = 0x0,
+        Unlabeled = 0x1,
+        Labeled = 0x2,
+        All = Unlabeled | Labeled
+    }
+
+    // A cache of completion entries for keywords, these do not change between sessions
+    //this is only used in one place...
+    export const keywordCompletions: CompletionEntry[] = [];
+    for (let i = SyntaxKind.FirstKeyword; i <= SyntaxKind.LastKeyword; i++) {
+        keywordCompletions.push({
+            name: tokenToString(i),
+            kind: ScriptElementKind.keyword,
+            kindModifiers: ScriptElementKindModifier.none,
+            sortText: "0"
+        });
+    }
+
+    /* @internal */ export function getContainerNode(node: Node): Declaration {
+        while (true) {
+            node = node.parent;
+            if (!node) {
+                return undefined;
+            }
+            switch (node.kind) {
+                case SyntaxKind.SourceFile:
+                case SyntaxKind.MethodDeclaration:
+                case SyntaxKind.MethodSignature:
+                case SyntaxKind.FunctionDeclaration:
+                case SyntaxKind.FunctionExpression:
+                case SyntaxKind.GetAccessor:
+                case SyntaxKind.SetAccessor:
+                case SyntaxKind.ClassDeclaration:
+                case SyntaxKind.InterfaceDeclaration:
+                case SyntaxKind.EnumDeclaration:
+                case SyntaxKind.ModuleDeclaration:
+                    return <Declaration>node;
+            }
+        }
+    }
+
+    /* @internal */ export function getNodeKind(node: Node): string {
+        switch (node.kind) {
+            case SyntaxKind.SourceFile:
+                return isExternalModule(<SourceFile>node) ? ScriptElementKind.moduleElement : ScriptElementKind.scriptElement;
+            case SyntaxKind.ModuleDeclaration:
+                return ScriptElementKind.moduleElement;
+            case SyntaxKind.ClassDeclaration:
+            case SyntaxKind.ClassExpression:
+                return ScriptElementKind.classElement;
+            case SyntaxKind.InterfaceDeclaration: return ScriptElementKind.interfaceElement;
+            case SyntaxKind.TypeAliasDeclaration: return ScriptElementKind.typeElement;
+            case SyntaxKind.EnumDeclaration: return ScriptElementKind.enumElement;
+            case SyntaxKind.VariableDeclaration:
+                return getKindOfVariableDeclaration(<VariableDeclaration>node);
+            case SyntaxKind.BindingElement:
+                return getKindOfVariableDeclaration(<VariableDeclaration>getRootDeclaration(node));
+            case SyntaxKind.ArrowFunction:
+            case SyntaxKind.FunctionDeclaration:
+            case SyntaxKind.FunctionExpression:
+                return ScriptElementKind.functionElement;
+            case SyntaxKind.GetAccessor: return ScriptElementKind.memberGetAccessorElement;
+            case SyntaxKind.SetAccessor: return ScriptElementKind.memberSetAccessorElement;
+            case SyntaxKind.MethodDeclaration:
+            case SyntaxKind.MethodSignature:
+                return ScriptElementKind.memberFunctionElement;
+            case SyntaxKind.PropertyDeclaration:
+            case SyntaxKind.PropertySignature:
+                return ScriptElementKind.memberVariableElement;
+            case SyntaxKind.IndexSignature: return ScriptElementKind.indexSignatureElement;
+            case SyntaxKind.ConstructSignature: return ScriptElementKind.constructSignatureElement;
+            case SyntaxKind.CallSignature: return ScriptElementKind.callSignatureElement;
+            case SyntaxKind.Constructor: return ScriptElementKind.constructorImplementationElement;
+            case SyntaxKind.TypeParameter: return ScriptElementKind.typeParameterElement;
+            case SyntaxKind.EnumMember: return ScriptElementKind.enumMemberElement;
+            case SyntaxKind.Parameter: return (node.flags & NodeFlags.ParameterPropertyModifier) ? ScriptElementKind.memberVariableElement : ScriptElementKind.parameterElement;
+            case SyntaxKind.ImportEqualsDeclaration:
+            case SyntaxKind.ImportSpecifier:
+            case SyntaxKind.ImportClause:
+            case SyntaxKind.ExportSpecifier:
+            case SyntaxKind.NamespaceImport:
+                return ScriptElementKind.alias;
+            case SyntaxKind.JSDocTypedefTag:
+                return ScriptElementKind.typeElement;
+            default:
+                return ScriptElementKind.unknown;
+        }
+
+        function getKindOfVariableDeclaration(v: VariableDeclaration): string {
+            return isConst(v)
+                ? ScriptElementKind.constElement
+                : isLet(v)
+                    ? ScriptElementKind.letElement
+                    : ScriptElementKind.variableElement;
+        }
+    }
+
+    export function getDefinitionFromSymbol(typeChecker: TypeChecker, symbol: Symbol, node: Node): DefinitionInfo[] {
+        const result: DefinitionInfo[] = [];
+        const declarations = symbol.getDeclarations();
+        const { symbolName, symbolKind, containerName } = getSymbolInfo(typeChecker, symbol, node);
+
+        if (!tryAddConstructSignature(symbol, node, symbolKind, symbolName, containerName, result) &&
+            !tryAddCallSignature(symbol, node, symbolKind, symbolName, containerName, result)) {
+            // Just add all the declarations.
+            forEach(declarations, declaration => {
+                result.push(createDefinitionInfo(declaration, symbolKind, symbolName, containerName));
+            });
+        }
+
+        return result;
+
+        function tryAddConstructSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            // Applicable only if we are in a new expression, or we are on a constructor declaration
+            // and in either case the symbol has a construct signature definition, i.e. class
+            if (isNewExpressionTarget(location) || location.kind === SyntaxKind.ConstructorKeyword) {
+                if (symbol.flags & SymbolFlags.Class) {
+                    // Find the first class-like declaration and try to get the construct signature.
+                    for (const declaration of symbol.getDeclarations()) {
+                        if (isClassLike(declaration)) {
+                            return tryAddSignature(declaration.members,
+                                                    /*selectConstructors*/ true,
+                                                    symbolKind,
+                                                    symbolName,
+                                                    containerName,
+                                                    result);
+                        }
+                    }
+
+                    Debug.fail("Expected declaration to have at least one class-like declaration");
+                }
+            }
+            return false;
+        }
+
+        function tryAddCallSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            if (isCallExpressionTarget(location) || isNewExpressionTarget(location) || isNameOfFunctionDeclaration(location)) {
+                return tryAddSignature(symbol.declarations, /*selectConstructors*/ false, symbolKind, symbolName, containerName, result);
+            }
+            return false;
+        }
+
+        function tryAddSignature(signatureDeclarations: Declaration[], selectConstructors: boolean, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            const declarations: Declaration[] = [];
+            let definition: Declaration;
+
+            forEach(signatureDeclarations, d => {
+                if ((selectConstructors && d.kind === SyntaxKind.Constructor) ||
+                    (!selectConstructors && (d.kind === SyntaxKind.FunctionDeclaration || d.kind === SyntaxKind.MethodDeclaration || d.kind === SyntaxKind.MethodSignature))) {
+                    declarations.push(d);
+                    if ((<FunctionLikeDeclaration>d).body) definition = d;
+                }
+            });
+
+            if (definition) {
+                result.push(createDefinitionInfo(definition, symbolKind, symbolName, containerName));
+                return true;
+            }
+            else if (declarations.length) {
+                result.push(createDefinitionInfo(lastOrUndefined(declarations), symbolKind, symbolName, containerName));
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    //end new utilities
+
+
+
+
+    //even more new utilities
+    export function createDefinitionInfo(node: Node, symbolKind: string, symbolName: string, containerName: string): DefinitionInfo {
+        return {
+            fileName: node.getSourceFile().fileName,
+            textSpan: createTextSpanFromBounds(node.getStart(), node.getEnd()),
+            kind: symbolKind,
+            name: symbolName,
+            containerKind: undefined,
+            containerName
+        };
+    }
+
+    export function getSymbolInfo(typeChecker: TypeChecker, symbol: Symbol, node: Node) {
+        return {
+            symbolName: typeChecker.symbolToString(symbol), // Do not get scoped name, just the name of the symbol
+            symbolKind: SymbolDisplay.getSymbolKind(typeChecker, symbol, node),
+            containerName: symbol.parent ? typeChecker.symbolToString(symbol.parent, node) : ""
+        };
+    }
+
+    export function getMeaningFromLocation(node: Node): SemanticMeaning {
+        if (node.parent.kind === SyntaxKind.ExportAssignment) {
+            return SemanticMeaning.Value | SemanticMeaning.Type | SemanticMeaning.Namespace;
+        }
+        else if (isInRightSideOfImport(node)) {
+            return getMeaningFromRightHandSideOfImportEquals(node);
+        }
+        else if (isDeclarationName(node)) {
+            return getMeaningFromDeclaration(node.parent);
+        }
+        else if (isTypeReference(node)) {
+            return SemanticMeaning.Type;
+        }
+        else if (isNamespaceReference(node)) {
+            return SemanticMeaning.Namespace;
+        }
+        else {
+            return SemanticMeaning.Value;
+        }
+    }
+
+    export function getMeaningFromDeclaration(node: Node): SemanticMeaning {
+        switch (node.kind) {
+            case SyntaxKind.Parameter:
+            case SyntaxKind.VariableDeclaration:
+            case SyntaxKind.BindingElement:
+            case SyntaxKind.PropertyDeclaration:
+            case SyntaxKind.PropertySignature:
+            case SyntaxKind.PropertyAssignment:
+            case SyntaxKind.ShorthandPropertyAssignment:
+            case SyntaxKind.EnumMember:
+            case SyntaxKind.MethodDeclaration:
+            case SyntaxKind.MethodSignature:
+            case SyntaxKind.Constructor:
+            case SyntaxKind.GetAccessor:
+            case SyntaxKind.SetAccessor:
+            case SyntaxKind.FunctionDeclaration:
+            case SyntaxKind.FunctionExpression:
+            case SyntaxKind.ArrowFunction:
+            case SyntaxKind.CatchClause:
+                return SemanticMeaning.Value;
+
+            case SyntaxKind.TypeParameter:
+            case SyntaxKind.InterfaceDeclaration:
+            case SyntaxKind.TypeAliasDeclaration:
+            case SyntaxKind.TypeLiteral:
+                return SemanticMeaning.Type;
+
+            case SyntaxKind.ClassDeclaration:
+            case SyntaxKind.EnumDeclaration:
+                return SemanticMeaning.Value | SemanticMeaning.Type;
+
+            case SyntaxKind.ModuleDeclaration:
+                if (isAmbientModule(<ModuleDeclaration>node)) {
+                    return SemanticMeaning.Namespace | SemanticMeaning.Value;
+                }
+                else if (getModuleInstanceState(node) === ModuleInstanceState.Instantiated) {
+                    return SemanticMeaning.Namespace | SemanticMeaning.Value;
+                }
+                else {
+                    return SemanticMeaning.Namespace;
+                }
+
+            case SyntaxKind.NamedImports:
+            case SyntaxKind.ImportSpecifier:
+            case SyntaxKind.ImportEqualsDeclaration:
+            case SyntaxKind.ImportDeclaration:
+            case SyntaxKind.ExportAssignment:
+            case SyntaxKind.ExportDeclaration:
+                return SemanticMeaning.Value | SemanticMeaning.Type | SemanticMeaning.Namespace;
+
+            // An external module can be a Value
+            case SyntaxKind.SourceFile:
+                return SemanticMeaning.Namespace | SemanticMeaning.Value;
+        }
+
+        return SemanticMeaning.Value | SemanticMeaning.Type | SemanticMeaning.Namespace;
+    }
+
+    function isInRightSideOfImport(node: Node) {
+        while (node.parent.kind === SyntaxKind.QualifiedName) {
+            node = node.parent;
+        }
+        return isInternalModuleImportEqualsDeclaration(node.parent) && (<ImportEqualsDeclaration>node.parent).moduleReference === node;
+    }
+
+    function isTypeReference(node: Node): boolean {
+        if (isRightSideOfQualifiedNameOrPropertyAccess(node)) {
+            node = node.parent;
+        }
+
+        return node.parent.kind === SyntaxKind.TypeReference ||
+            (node.parent.kind === SyntaxKind.ExpressionWithTypeArguments && !isExpressionWithTypeArgumentsInClassExtendsClause(<ExpressionWithTypeArguments>node.parent)) ||
+            (node.kind === SyntaxKind.ThisKeyword && !isExpression(node)) ||
+            node.kind === SyntaxKind.ThisType;
+    }
+
+    function isNamespaceReference(node: Node): boolean {
+        return isQualifiedNameNamespaceReference(node) || isPropertyAccessNamespaceReference(node);
+    }
+
+    function isQualifiedNameNamespaceReference(node: Node): boolean {
+        let root = node;
+        let isLastClause = true;
+        if (root.parent.kind === SyntaxKind.QualifiedName) {
+            while (root.parent && root.parent.kind === SyntaxKind.QualifiedName) {
+                root = root.parent;
+            }
+
+            isLastClause = (<QualifiedName>root).right === node;
+        }
+
+        return root.parent.kind === SyntaxKind.TypeReference && !isLastClause;
+    }
+
+    function getMeaningFromRightHandSideOfImportEquals(node: Node) {
+        Debug.assert(node.kind === SyntaxKind.Identifier);
+
+        //     import a = |b|; // Namespace
+        //     import a = |b.c|; // Value, type, namespace
+        //     import a = |b.c|.d; // Namespace
+
+        if (node.parent.kind === SyntaxKind.QualifiedName &&
+            (<QualifiedName>node.parent).right === node &&
+            node.parent.parent.kind === SyntaxKind.ImportEqualsDeclaration) {
+            return SemanticMeaning.Value | SemanticMeaning.Type | SemanticMeaning.Namespace;
+        }
+        return SemanticMeaning.Namespace;
+    }
+
+    function isPropertyAccessNamespaceReference(node: Node): boolean {
+        let root = node;
+        let isLastClause = true;
+        if (root.parent.kind === SyntaxKind.PropertyAccessExpression) {
+            while (root.parent && root.parent.kind === SyntaxKind.PropertyAccessExpression) {
+                root = root.parent;
+            }
+
+            isLastClause = (<PropertyAccessExpression>root).name === node;
+        }
+
+        if (!isLastClause && root.parent.kind === SyntaxKind.ExpressionWithTypeArguments && root.parent.parent.kind === SyntaxKind.HeritageClause) {
+            const decl = root.parent.parent.parent;
+            return (decl.kind === SyntaxKind.ClassDeclaration && (<HeritageClause>root.parent.parent).token === SyntaxKind.ImplementsKeyword) ||
+                (decl.kind === SyntaxKind.InterfaceDeclaration && (<HeritageClause>root.parent.parent).token === SyntaxKind.ExtendsKeyword);
+        }
+
+        return false;
+    }
+
+    export function isLocalVariableOrFunction(symbol: Symbol) {
+        if (symbol.parent) {
+            return false; // This is exported symbol
+        }
+
+        return ts.forEach(symbol.declarations, declaration => {
+            // Function expressions are local
+            if (declaration.kind === SyntaxKind.FunctionExpression) {
+                return true;
+            }
+
+            if (declaration.kind !== SyntaxKind.VariableDeclaration && declaration.kind !== SyntaxKind.FunctionDeclaration) {
+                return false;
+            }
+
+            // If the parent is not sourceFile or module block it is local variable
+            for (let parent = declaration.parent; !isFunctionBlock(parent); parent = parent.parent) {
+                // Reached source file or module block
+                if (parent.kind === SyntaxKind.SourceFile || parent.kind === SyntaxKind.ModuleBlock) {
+                    return false;
+                }
+            }
+
+            // parent is in function block
+            return true;
+        });
+    }
+
+    //end even more new utilities
+
+
+
+
+
+
+
+
+
+
     export interface ListItemInfo {
         listItemIndex: number;
         list: Node;
