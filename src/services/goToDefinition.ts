@@ -115,4 +115,20 @@ namespace ts.GoToDefinition {
         const { symbolName, symbolKind, containerName } = getSymbolInfo(typeChecker, decl.symbol, decl);
         return createDefinitionInfo(decl, symbolKind, symbolName, containerName);
     }
+
+    function tryGetSignatureDeclaration(typeChecker: TypeChecker, node: Node): SignatureDeclaration | undefined {
+        const callLike = getAncestorCallLikeExpression(node);
+        return callLike && typeChecker.getResolvedSignature(callLike).declaration;
+    }
+
+    /** Returns a CallLikeExpression where `node` is the target being invoked. */
+    function getAncestorCallLikeExpression(node: Node): CallLikeExpression | undefined {
+        const target = climbPastManyPropertyAccesses(node);
+        const callLike = target.parent;
+        return callLike && isCallLikeExpression(callLike) && getInvokedExpression(callLike) === target && callLike;
+    }
+
+    function climbPastManyPropertyAccesses(node: Node): Node {
+        return isRightSideOfPropertyAccess(node) ? climbPastManyPropertyAccesses(node.parent) : node;
+    }
 }

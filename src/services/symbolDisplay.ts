@@ -1,5 +1,5 @@
 /* @internal */
-namespace ts.SymbolDisplay { //name?
+namespace ts.SymbolDisplay {
     // TODO(drosen): use contextual SemanticMeaning.
     export function getSymbolKind(typeChecker: TypeChecker, symbol: Symbol, location: Node): string {
         const flags = symbol.getFlags();

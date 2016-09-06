@@ -1,10 +1,8 @@
 // These utilities are common to multiple language service features.
 /* @internal */
 namespace ts {
-
     //new utilities (used to be inside services.ts)
     //todo: find references for each of these and see if they belong in a different module
-
     export function getTargetLabel(referenceNode: Node, labelName: string): Identifier {
         while (referenceNode) {
             if (referenceNode.kind === SyntaxKind.LabeledStatement && (<LabeledStatement>referenceNode).label.text === labelName) {
@@ -21,24 +19,10 @@ namespace ts {
             (<BreakOrContinueStatement>node.parent).label === node;
     }
 
-    export function isLabelOfLabeledStatement(node: Node): boolean {
+    function isLabelOfLabeledStatement(node: Node): boolean {
         return node.kind === SyntaxKind.Identifier &&
             node.parent.kind === SyntaxKind.LabeledStatement &&
             (<LabeledStatement>node.parent).label === node;
-    }
-
-    /**
-     * Whether or not a 'node' is preceded by a label of the given string.
-     * Note: 'node' cannot be a SourceFile.
-     */
-    export function isLabeledBy(node: Node, labelName: string) {
-        for (let owner = node.parent; owner.kind === SyntaxKind.LabeledStatement; owner = owner.parent) {
-            if ((<LabeledStatement>owner).label.text === labelName) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     export function isLabelName(node: Node): boolean {
@@ -57,11 +41,6 @@ namespace ts {
         return isRightSideOfPropertyAccess(node) ? node.parent : node;
     }
 
-    /** Get `C` given `N` if `N` is in the position `class C extends N` or `class C extends foo.N` where `N` is an identifier. */
-    export function tryGetClassByExtendingIdentifier(node: Node): ClassLikeDeclaration | undefined {
-        return tryGetClassExtendingExpressionWithTypeArguments(climbPastPropertyAccess(node).parent);
-    }
-
     export function isCallExpressionTarget(node: Node): boolean {
         return isCallOrNewExpressionTarget(node, SyntaxKind.CallExpression);
     }
@@ -70,25 +49,9 @@ namespace ts {
         return isCallOrNewExpressionTarget(node, SyntaxKind.NewExpression);
     }
 
-    export function isCallOrNewExpressionTarget(node: Node, kind: SyntaxKind) {
+    function isCallOrNewExpressionTarget(node: Node, kind: SyntaxKind) {
         const target = climbPastPropertyAccess(node);
         return target && target.parent && target.parent.kind === kind && (<CallExpression>target.parent).expression === target;
-    }
-
-    export function climbPastManyPropertyAccesses(node: Node): Node {
-        return isRightSideOfPropertyAccess(node) ? climbPastManyPropertyAccesses(node.parent) : node;
-    }
-
-    /** Returns a CallLikeExpression where `node` is the target being invoked. */
-    export function getAncestorCallLikeExpression(node: Node): CallLikeExpression | undefined {
-        const target = climbPastManyPropertyAccesses(node);
-        const callLike = target.parent;
-        return callLike && isCallLikeExpression(callLike) && getInvokedExpression(callLike) === target && callLike;
-    }
-
-    export function tryGetSignatureDeclaration(typeChecker: TypeChecker, node: Node): SignatureDeclaration | undefined {
-        const callLike = getAncestorCallLikeExpression(node);
-        return callLike && typeChecker.getResolvedSignature(callLike).declaration;
     }
 
     export function isNameOfModuleDeclaration(node: Node) {
@@ -98,35 +61,6 @@ namespace ts {
     export function isNameOfFunctionDeclaration(node: Node): boolean {
         return node.kind === SyntaxKind.Identifier &&
             isFunctionLike(node.parent) && (<FunctionLikeDeclaration>node.parent).name === node;
-    }
-
-    export function isObjectLiteralPropertyDeclaration(node: Node): node is ObjectLiteralElement  {
-        switch (node.kind) {
-            case SyntaxKind.PropertyAssignment:
-            case SyntaxKind.ShorthandPropertyAssignment:
-            case SyntaxKind.MethodDeclaration:
-            case SyntaxKind.GetAccessor:
-            case SyntaxKind.SetAccessor:
-                return true;
-        }
-        return false;
-    }
-
-    /**
-     * Returns the containing object literal property declaration given a possible name node, e.g. "a" in x = { "a": 1 }
-     */
-    export function getContainingObjectLiteralElement(node: Node): ObjectLiteralElement {
-        switch (node.kind) {
-            case SyntaxKind.StringLiteral:
-            case SyntaxKind.NumericLiteral:
-                if (node.parent.kind === SyntaxKind.ComputedPropertyName) {
-                    return isObjectLiteralPropertyDeclaration(node.parent.parent) ? node.parent.parent : undefined;
-                }
-            // intential fall through
-            case SyntaxKind.Identifier:
-                return isObjectLiteralPropertyDeclaration(node.parent) && node.parent.name === node ? node.parent : undefined;
-        }
-        return undefined;
     }
 
     export function isLiteralNameOfPropertyDeclarationOrIndexAccess(node: Node): boolean {
@@ -147,15 +81,6 @@ namespace ts {
                 case SyntaxKind.ComputedPropertyName:
                     return true;
             }
-        }
-
-        return false;
-    }
-
-    export function isNameOfExternalModuleImportOrDeclaration(node: Node): boolean {
-        if (node.kind === SyntaxKind.StringLiteral) {
-            return isNameOfModuleDeclaration(node) ||
-                (isExternalModuleImportEqualsDeclaration(node.parent.parent) && getExternalModuleImportEqualsDeclarationExpression(node.parent.parent) === node);
         }
 
         return false;
@@ -298,6 +223,7 @@ namespace ts {
         }
     }
 
+    //move to goToDefinition but still export
     export function getDefinitionFromSymbol(typeChecker: TypeChecker, symbol: Symbol, node: Node): DefinitionInfo[] {
         const result: DefinitionInfo[] = [];
         const declarations = symbol.getDeclarations();
@@ -367,7 +293,6 @@ namespace ts {
             return false;
         }
     }
-
     //end new utilities
 
 
@@ -569,6 +494,28 @@ namespace ts {
             // parent is in function block
             return true;
         });
+    }
+
+    export function isThis(node: Node): boolean {
+        switch (node.kind) {
+            case SyntaxKind.ThisKeyword:
+            // case SyntaxKind.ThisType: TODO: GH#9267
+                return true;
+            case SyntaxKind.Identifier:
+                // 'this' as a parameter
+                return (node as Identifier).originalKeywordKind === SyntaxKind.ThisKeyword && node.parent.kind === SyntaxKind.Parameter;
+            default:
+                return false;
+        }
+    }
+
+    export function getStringLiteralTypeForNode(node: StringLiteral | LiteralTypeNode, typeChecker: TypeChecker): LiteralType {
+        const searchNode = node.parent.kind === SyntaxKind.LiteralType ? <LiteralTypeNode>node.parent : node;
+        const type = typeChecker.getTypeAtLocation(searchNode);
+        if (type && type.flags & TypeFlags.StringLiteral) {
+            return <LiteralType>type;
+        }
+        return undefined;
     }
 
     //end even more new utilities
