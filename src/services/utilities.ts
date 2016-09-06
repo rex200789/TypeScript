@@ -1,8 +1,6 @@
 // These utilities are common to multiple language service features.
 /* @internal */
 namespace ts {
-    //new utilities (used to be inside services.ts)
-    //todo: find references for each of these and see if they belong in a different module
     export function getTargetLabel(referenceNode: Node, labelName: string): Identifier {
         while (referenceNode) {
             if (referenceNode.kind === SyntaxKind.LabeledStatement && (<LabeledStatement>referenceNode).label.text === labelName) {
@@ -125,26 +123,7 @@ namespace ts {
         All = Value | Type | Namespace
     }
 
-    export const enum BreakContinueSearchType {
-        None = 0x0,
-        Unlabeled = 0x1,
-        Labeled = 0x2,
-        All = Unlabeled | Labeled
-    }
-
-    // A cache of completion entries for keywords, these do not change between sessions
-    //this is only used in one place...
-    export const keywordCompletions: CompletionEntry[] = [];
-    for (let i = SyntaxKind.FirstKeyword; i <= SyntaxKind.LastKeyword; i++) {
-        keywordCompletions.push({
-            name: tokenToString(i),
-            kind: ScriptElementKind.keyword,
-            kindModifiers: ScriptElementKindModifier.none,
-            sortText: "0"
-        });
-    }
-
-    /* @internal */ export function getContainerNode(node: Node): Declaration {
+    export function getContainerNode(node: Node): Declaration {
         while (true) {
             node = node.parent;
             if (!node) {
@@ -167,7 +146,7 @@ namespace ts {
         }
     }
 
-    /* @internal */ export function getNodeKind(node: Node): string {
+    export function getNodeKind(node: Node): string {
         switch (node.kind) {
             case SyntaxKind.SourceFile:
                 return isExternalModule(<SourceFile>node) ? ScriptElementKind.moduleElement : ScriptElementKind.scriptElement;
@@ -221,101 +200,6 @@ namespace ts {
                     ? ScriptElementKind.letElement
                     : ScriptElementKind.variableElement;
         }
-    }
-
-    //move to goToDefinition but still export
-    export function getDefinitionFromSymbol(typeChecker: TypeChecker, symbol: Symbol, node: Node): DefinitionInfo[] {
-        const result: DefinitionInfo[] = [];
-        const declarations = symbol.getDeclarations();
-        const { symbolName, symbolKind, containerName } = getSymbolInfo(typeChecker, symbol, node);
-
-        if (!tryAddConstructSignature(symbol, node, symbolKind, symbolName, containerName, result) &&
-            !tryAddCallSignature(symbol, node, symbolKind, symbolName, containerName, result)) {
-            // Just add all the declarations.
-            forEach(declarations, declaration => {
-                result.push(createDefinitionInfo(declaration, symbolKind, symbolName, containerName));
-            });
-        }
-
-        return result;
-
-        function tryAddConstructSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
-            // Applicable only if we are in a new expression, or we are on a constructor declaration
-            // and in either case the symbol has a construct signature definition, i.e. class
-            if (isNewExpressionTarget(location) || location.kind === SyntaxKind.ConstructorKeyword) {
-                if (symbol.flags & SymbolFlags.Class) {
-                    // Find the first class-like declaration and try to get the construct signature.
-                    for (const declaration of symbol.getDeclarations()) {
-                        if (isClassLike(declaration)) {
-                            return tryAddSignature(declaration.members,
-                                                    /*selectConstructors*/ true,
-                                                    symbolKind,
-                                                    symbolName,
-                                                    containerName,
-                                                    result);
-                        }
-                    }
-
-                    Debug.fail("Expected declaration to have at least one class-like declaration");
-                }
-            }
-            return false;
-        }
-
-        function tryAddCallSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
-            if (isCallExpressionTarget(location) || isNewExpressionTarget(location) || isNameOfFunctionDeclaration(location)) {
-                return tryAddSignature(symbol.declarations, /*selectConstructors*/ false, symbolKind, symbolName, containerName, result);
-            }
-            return false;
-        }
-
-        function tryAddSignature(signatureDeclarations: Declaration[], selectConstructors: boolean, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
-            const declarations: Declaration[] = [];
-            let definition: Declaration;
-
-            forEach(signatureDeclarations, d => {
-                if ((selectConstructors && d.kind === SyntaxKind.Constructor) ||
-                    (!selectConstructors && (d.kind === SyntaxKind.FunctionDeclaration || d.kind === SyntaxKind.MethodDeclaration || d.kind === SyntaxKind.MethodSignature))) {
-                    declarations.push(d);
-                    if ((<FunctionLikeDeclaration>d).body) definition = d;
-                }
-            });
-
-            if (definition) {
-                result.push(createDefinitionInfo(definition, symbolKind, symbolName, containerName));
-                return true;
-            }
-            else if (declarations.length) {
-                result.push(createDefinitionInfo(lastOrUndefined(declarations), symbolKind, symbolName, containerName));
-                return true;
-            }
-
-            return false;
-        }
-    }
-    //end new utilities
-
-
-
-
-    //even more new utilities
-    export function createDefinitionInfo(node: Node, symbolKind: string, symbolName: string, containerName: string): DefinitionInfo {
-        return {
-            fileName: node.getSourceFile().fileName,
-            textSpan: createTextSpanFromBounds(node.getStart(), node.getEnd()),
-            kind: symbolKind,
-            name: symbolName,
-            containerKind: undefined,
-            containerName
-        };
-    }
-
-    export function getSymbolInfo(typeChecker: TypeChecker, symbol: Symbol, node: Node) {
-        return {
-            symbolName: typeChecker.symbolToString(symbol), // Do not get scoped name, just the name of the symbol
-            symbolKind: SymbolDisplay.getSymbolKind(typeChecker, symbol, node),
-            containerName: symbol.parent ? typeChecker.symbolToString(symbol.parent, node) : ""
-        };
     }
 
     export function getMeaningFromLocation(node: Node): SemanticMeaning {
@@ -468,34 +352,6 @@ namespace ts {
         return false;
     }
 
-    export function isLocalVariableOrFunction(symbol: Symbol) {
-        if (symbol.parent) {
-            return false; // This is exported symbol
-        }
-
-        return ts.forEach(symbol.declarations, declaration => {
-            // Function expressions are local
-            if (declaration.kind === SyntaxKind.FunctionExpression) {
-                return true;
-            }
-
-            if (declaration.kind !== SyntaxKind.VariableDeclaration && declaration.kind !== SyntaxKind.FunctionDeclaration) {
-                return false;
-            }
-
-            // If the parent is not sourceFile or module block it is local variable
-            for (let parent = declaration.parent; !isFunctionBlock(parent); parent = parent.parent) {
-                // Reached source file or module block
-                if (parent.kind === SyntaxKind.SourceFile || parent.kind === SyntaxKind.ModuleBlock) {
-                    return false;
-                }
-            }
-
-            // parent is in function block
-            return true;
-        });
-    }
-
     export function isThis(node: Node): boolean {
         switch (node.kind) {
             case SyntaxKind.ThisKeyword:
@@ -518,16 +374,56 @@ namespace ts {
         return undefined;
     }
 
-    //end even more new utilities
+    export function getNameTable(sourceFile: SourceFile): Map<number> {
+        if (!sourceFile.nameTable) {
+            initializeNameTable(sourceFile);
+        }
 
+        return sourceFile.nameTable;
+    }
 
+    function initializeNameTable(sourceFile: SourceFile): void {
+        const nameTable = createMap<number>();
 
+        walk(sourceFile);
+        sourceFile.nameTable = nameTable;
 
+        function walk(node: Node) {
+            switch (node.kind) {
+                case SyntaxKind.Identifier:
+                    nameTable[(<Identifier>node).text] = nameTable[(<Identifier>node).text] === undefined ? node.pos : -1;
+                    break;
+                case SyntaxKind.StringLiteral:
+                case SyntaxKind.NumericLiteral:
+                    // We want to store any numbers/strings if they were a name that could be
+                    // related to a declaration.  So, if we have 'import x = require("something")'
+                    // then we want 'something' to be in the name table.  Similarly, if we have
+                    // "a['propname']" then we want to store "propname" in the name table.
+                    if (isDeclarationName(node) ||
+                        node.parent.kind === SyntaxKind.ExternalModuleReference ||
+                        isArgumentOfElementAccessExpression(node) ||
+                        isLiteralComputedPropertyDeclarationName(node)) {
 
+                        nameTable[(<LiteralExpression>node).text] = nameTable[(<LiteralExpression>node).text] === undefined ? node.pos : -1;
+                    }
+                    break;
+                default:
+                    forEachChild(node, walk);
+                    if (node.jsDocComments) {
+                        for (const jsDocComment of node.jsDocComments) {
+                            forEachChild(jsDocComment, walk);
+                        }
+                    }
+            }
+        }
+    }
 
-
-
-
+    function isArgumentOfElementAccessExpression(node: Node) {
+        return node &&
+            node.parent &&
+            node.parent.kind === SyntaxKind.ElementAccessExpression &&
+            (<ElementAccessExpression>node.parent).argumentExpression === node;
+    }
 
     export interface ListItemInfo {
         listItemIndex: number;

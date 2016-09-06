@@ -492,4 +492,32 @@ namespace ts.SymbolDisplay {
             addRange(displayParts, typeParameterParts);
         }
     }
+
+    function isLocalVariableOrFunction(symbol: Symbol) {
+        if (symbol.parent) {
+            return false; // This is exported symbol
+        }
+
+        return ts.forEach(symbol.declarations, declaration => {
+            // Function expressions are local
+            if (declaration.kind === SyntaxKind.FunctionExpression) {
+                return true;
+            }
+
+            if (declaration.kind !== SyntaxKind.VariableDeclaration && declaration.kind !== SyntaxKind.FunctionDeclaration) {
+                return false;
+            }
+
+            // If the parent is not sourceFile or module block it is local variable
+            for (let parent = declaration.parent; !isFunctionBlock(parent); parent = parent.parent) {
+                // Reached source file or module block
+                if (parent.kind === SyntaxKind.SourceFile || parent.kind === SyntaxKind.ModuleBlock) {
+                    return false;
+                }
+            }
+
+            // parent is in function block
+            return true;
+        });
+    }
 }

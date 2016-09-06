@@ -131,4 +131,126 @@ namespace ts.GoToDefinition {
     function climbPastManyPropertyAccesses(node: Node): Node {
         return isRightSideOfPropertyAccess(node) ? climbPastManyPropertyAccesses(node.parent) : node;
     }
+
+    export function getTypeDefinitionAtPosition(typeChecker: TypeChecker, sourceFile: SourceFile, position: number): DefinitionInfo[] {
+            const node = getTouchingPropertyName(sourceFile, position);
+            if (node === sourceFile) {
+                return undefined;
+            }
+
+            const symbol = typeChecker.getSymbolAtLocation(node);
+            if (!symbol) {
+                return undefined;
+            }
+
+            const type = typeChecker.getTypeOfSymbolAtLocation(symbol, node);
+            if (!type) {
+                return undefined;
+            }
+
+            if (type.flags & TypeFlags.Union && !(type.flags & TypeFlags.Enum)) {
+                const result: DefinitionInfo[] = [];
+                forEach((<UnionType>type).types, t => {
+                    if (t.symbol) {
+                        addRange(/*to*/ result, /*from*/ getDefinitionFromSymbol(typeChecker, t.symbol, node));
+                    }
+                });
+                return result;
+            }
+
+            if (!type.symbol) {
+                return undefined;
+            }
+
+            return getDefinitionFromSymbol(typeChecker, type.symbol, node);
+    }
+
+    function getDefinitionFromSymbol(typeChecker: TypeChecker, symbol: Symbol, node: Node): DefinitionInfo[] {
+        const result: DefinitionInfo[] = [];
+        const declarations = symbol.getDeclarations();
+        const { symbolName, symbolKind, containerName } = getSymbolInfo(typeChecker, symbol, node);
+
+        if (!tryAddConstructSignature(symbol, node, symbolKind, symbolName, containerName, result) &&
+            !tryAddCallSignature(symbol, node, symbolKind, symbolName, containerName, result)) {
+            // Just add all the declarations.
+            forEach(declarations, declaration => {
+                result.push(createDefinitionInfo(declaration, symbolKind, symbolName, containerName));
+            });
+        }
+
+        return result;
+
+        function tryAddConstructSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            // Applicable only if we are in a new expression, or we are on a constructor declaration
+            // and in either case the symbol has a construct signature definition, i.e. class
+            if (isNewExpressionTarget(location) || location.kind === SyntaxKind.ConstructorKeyword) {
+                if (symbol.flags & SymbolFlags.Class) {
+                    // Find the first class-like declaration and try to get the construct signature.
+                    for (const declaration of symbol.getDeclarations()) {
+                        if (isClassLike(declaration)) {
+                            return tryAddSignature(declaration.members,
+                                                    /*selectConstructors*/ true,
+                                                    symbolKind,
+                                                    symbolName,
+                                                    containerName,
+                                                    result);
+                        }
+                    }
+
+                    Debug.fail("Expected declaration to have at least one class-like declaration");
+                }
+            }
+            return false;
+        }
+
+        function tryAddCallSignature(symbol: Symbol, location: Node, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            if (isCallExpressionTarget(location) || isNewExpressionTarget(location) || isNameOfFunctionDeclaration(location)) {
+                return tryAddSignature(symbol.declarations, /*selectConstructors*/ false, symbolKind, symbolName, containerName, result);
+            }
+            return false;
+        }
+
+        function tryAddSignature(signatureDeclarations: Declaration[], selectConstructors: boolean, symbolKind: string, symbolName: string, containerName: string, result: DefinitionInfo[]) {
+            const declarations: Declaration[] = [];
+            let definition: Declaration;
+
+            forEach(signatureDeclarations, d => {
+                if ((selectConstructors && d.kind === SyntaxKind.Constructor) ||
+                    (!selectConstructors && (d.kind === SyntaxKind.FunctionDeclaration || d.kind === SyntaxKind.MethodDeclaration || d.kind === SyntaxKind.MethodSignature))) {
+                    declarations.push(d);
+                    if ((<FunctionLikeDeclaration>d).body) definition = d;
+                }
+            });
+
+            if (definition) {
+                result.push(createDefinitionInfo(definition, symbolKind, symbolName, containerName));
+                return true;
+            }
+            else if (declarations.length) {
+                result.push(createDefinitionInfo(lastOrUndefined(declarations), symbolKind, symbolName, containerName));
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    function createDefinitionInfo(node: Node, symbolKind: string, symbolName: string, containerName: string): DefinitionInfo {
+        return {
+            fileName: node.getSourceFile().fileName,
+            textSpan: createTextSpanFromBounds(node.getStart(), node.getEnd()),
+            kind: symbolKind,
+            name: symbolName,
+            containerKind: undefined,
+            containerName
+        };
+    }
+
+    function getSymbolInfo(typeChecker: TypeChecker, symbol: Symbol, node: Node) {
+        return {
+            symbolName: typeChecker.symbolToString(symbol), // Do not get scoped name, just the name of the symbol
+            symbolKind: SymbolDisplay.getSymbolKind(typeChecker, symbol, node),
+            containerName: symbol.parent ? typeChecker.symbolToString(symbol.parent, node) : ""
+        };
+    }
 }

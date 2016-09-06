@@ -28,6 +28,8 @@
         "../compiler/commandLineParser.ts",
         "../compiler/diagnosticInformationMap.generated.ts",
         "breakpoints.ts",
+        "classifier.ts",
+        "completions.ts",
         "documentHighlights.ts",
         "findAllReferences.ts",
         "goToDefinition.ts",

@@ -1,7 +1,7 @@
 /* @internal */
 namespace ts.DocumentHighlights {
     //name
-    export function getMeSomeDocumentHighlights(typeChecker: TypeChecker, cancellationToken: CancellationToken, sourceFile: SourceFile, position: number, sourceFilesToSearch: SourceFile[]): DocumentHighlights[] {
+    export function getDocumentHighlights(typeChecker: TypeChecker, cancellationToken: CancellationToken, sourceFile: SourceFile, position: number, sourceFilesToSearch: SourceFile[]): DocumentHighlights[] {
         const node = getTouchingWord(sourceFile, position);
         if (!node) {
             return undefined;
